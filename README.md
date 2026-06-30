@@ -41,8 +41,6 @@ Load the full 14-person family tree into Neo4j:
 
 ```bash
 python migrate_pl_to_neo4j.py --clear
-# or equivalently:
-python seed_family_graph.py --clear
 ```
 
 `family_kb.pl` holds the canonical seed facts (restored from Assignment 1). Runtime chat data entry writes directly to Neo4j via `neo4j_bridge.py`.
@@ -79,7 +77,6 @@ streamlit run app.py
 | `app.py` | Streamlit UI + AIML orchestration (minimal changes from A2) |
 | `neo4j_bridge.py` | `FamilyGraphEngine` — Cypher queries, BFS fallback, connection config, and data-entry helpers |
 | `migrate_pl_to_neo4j.py` | One-time Prolog → Neo4j migration |
-| `seed_family_graph.py` | One-time seed command wrapper |
 | `family_chatbot.aiml` | AIML patterns (with new inference query patterns) |
 | `family_kb.pl` | Original Prolog rules/facts (reference + migration source) |
 | `CYPHER_QUERIES.md` | Schema design and Cypher query documentation |
