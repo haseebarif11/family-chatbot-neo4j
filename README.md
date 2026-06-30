@@ -1,8 +1,8 @@
-# Family Tree Chatbot — Assignment 3
+# Family Tree Chatbot 
 
 Dynamic family data entry, deletion, and relationship querying using **AIML + Neo4j + Streamlit**.
 
-Assignment 2's Prolog/Python reasoning layer has been replaced with a Neo4j graph database. The AIML chat interface is unchanged.
+stage 2's Prolog/Python reasoning layer has been replaced with a Neo4j graph database. The AIML chat interface is unchanged.
 
 ## Architecture
 
