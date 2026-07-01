@@ -89,6 +89,24 @@ def _names(result) -> list[str]:
     return sorted({r["name"] for r in result if r.get("name")})
 
 
+def _path_to_prose(path: list[tuple[str, str, str]]) -> str:
+    """Turn a BFS edge list into a readable comma-separated sentence."""
+    phrases: list[str] = []
+    for src, rel, dst in path:
+        s, d = src.capitalize(), dst.capitalize()
+        if rel == "parent_of":
+            phrases.append(f"{s} is the parent of {d}")
+        elif rel == "child_of":
+            phrases.append(f"{s} is the child of {d}")
+        else:
+            phrases.append(f"{s} is married to {d}")
+    if not phrases:
+        return ""
+    if len(phrases) == 1:
+        return phrases[0] + "."
+    return ", ".join(phrases[:-1]) + f", and {phrases[-1]}."
+
+
 class FamilyGraphEngine:
     """Neo4j-backed family relationship engine."""
 
@@ -587,13 +605,11 @@ class FamilyGraphEngine:
         if not path:
             return f"No mutual connection found between {p1t} and {p2t}."
 
-        steps = []
-        for src, rel, dst in path:
-            verb = "is a parent of" if rel == "parent_of" else "is married to"
-            steps.append(f"{src.capitalize()} {verb} {dst.capitalize()}")
-        chain = " → ".join(steps)
+        chain = _path_to_prose(path)
         return (
-            f"{p1t} and {p2t} are connected through {len(path)} step(s): {chain}."
+            f"**Connection path** ({len(path)} step{'s' if len(path) != 1 else ''}):\n\n"
+            f"{chain}\n\n"
+            f"{p1t} and {p2t} are linked through the family graph."
         )
 
     def hidden_relationship(self, p1: str, p2: str) -> str:
@@ -629,17 +645,17 @@ class FamilyGraphEngine:
         # BFS path walk
         path = self._bfs_shortest_path(p1, p2)
         if not path:
-            return f"No known relationship path found between {p1t} and {p2t}."
+            return f"No known relationship path found between **{p1t}** and **{p2t}**."
 
-        steps = []
-        for src, rel, dst in path:
-            verb = "→(parent of)→" if rel == "parent_of" else "→(married to)→"
-            steps.append(f"{src.capitalize()} {verb} {dst.capitalize()}")
-        chain = "  ".join(steps)
+        chain = _path_to_prose(path)
+        hops = len(path)
         return (
-            f"Indirect relationship ({len(path)} hop(s)): {chain}. "
-            f"They are connected through the family graph but have no single "
-            f"named relationship label."
+            f"### Indirect Relationship\n\n"
+            f"**{p1t}** and **{p2t}** are connected through **{hops} "
+            f"step{'s' if hops != 1 else ''}** in the family graph:\n\n"
+            f"{chain}\n\n"
+            f"*They are related through the graph structure but do not share "
+            f"a single named relationship label (e.g. cousin, aunt, uncle).*"
         )
 
     def age_similarity(self, person: str, max_gap: int = 5) -> str:
@@ -716,11 +732,11 @@ class FamilyGraphEngine:
 
             # Relationship type counts
             parent_count = session.run(
-                "MATCH ()-[r:PARENT_OF]->() RETURN count(r) AS n"
-            ).single()["n"]
+                "OPTIONAL MATCH ()-[r:PARENT_OF]->() RETURN count(r) AS n"
+            ).single()["n"] or 0
             marriage_count = session.run(
-                "MATCH ()-[r:MARRIED_TO]-() RETURN toInteger(count(r)/2) AS n"
-            ).single()["n"]
+                "OPTIONAL MATCH ()-[r:MARRIED_TO]-() RETURN toInteger(count(r)/2) AS n"
+            ).single()["n"] or 0
 
             # Most-connected person (degree = PARENT_OF in+out + MARRIED_TO)
             mc = session.run(
@@ -745,20 +761,23 @@ class FamilyGraphEngine:
                 max_depth = len(ancestors)
                 deepest_person = person
 
-        lines = [
-            "📊 Family Graph Analysis Report",
-            "─" * 38,
-            f"  Nodes   : 1 label (Person) — {n_people} members",
-            f"  Edges   : PARENT_OF ({parent_count}), "
-            f"MARRIED_TO ({marriage_count})",
-            f"  Total relationships : {parent_count + marriage_count}",
-            "",
-            f"  🔗 Most connected : {most_connected_name} "
-            f"({most_connected_deg} direct links)",
-            f"  🌳 Deepest lineage: {deepest_person.capitalize()} "
-            f"has {max_depth} ancestor(s) above them",
-        ]
-        return "\n".join(lines)
+        total_rels = parent_count + marriage_count
+        deepest = deepest_person.capitalize() if deepest_person else "N/A"
+
+        return (
+            "### Family Graph Analysis Report\n\n"
+            "#### Graph Overview\n"
+            f"- **Node label:** `Person`\n"
+            f"- **Total members:** {n_people}\n"
+            f"- **PARENT_OF relationships:** {parent_count}\n"
+            f"- **MARRIED_TO couples:** {marriage_count}\n"
+            f"- **Total edges:** {total_rels}\n\n"
+            "#### Key Insights\n"
+            f"- **Most connected member:** {most_connected_name} "
+            f"({most_connected_deg} direct links)\n"
+            f"- **Deepest lineage:** {deepest} has **{max_depth}** "
+            f"ancestor{'s' if max_depth != 1 else ''} in the tree"
+        )
 
 _engine: FamilyGraphEngine | None = None
 

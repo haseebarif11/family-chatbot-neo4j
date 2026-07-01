@@ -668,12 +668,82 @@ def _verify(verify_person: str, rel: str, p1: str, engine) -> str:
     return f"No, {title(verify_person)} is not the {r} of {title(p1)}."
 
 
+def _inject_app_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background: linear-gradient(165deg, #f8fafc 0%, #eef2f7 45%, #e8f0ec 100%);
+        }
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #1e3a2f 0%, #2d5a47 100%);
+        }
+        [data-testid="stSidebar"] * {
+            color: #f0fdf4 !important;
+        }
+        [data-testid="stSidebar"] .stButton > button {
+            background: #4ade80;
+            color: #14532d !important;
+            border: none;
+            font-weight: 600;
+            border-radius: 8px;
+        }
+        [data-testid="stSidebar"] .stButton > button:hover {
+            background: #86efac;
+            color: #14532d !important;
+        }
+        .hero-banner {
+            background: linear-gradient(135deg, #1e3a2f 0%, #2d6a4f 55%, #40916c 100%);
+            border-radius: 16px;
+            padding: 1.6rem 1.8rem;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 8px 24px rgba(30, 58, 47, 0.18);
+        }
+        .hero-banner h1 {
+            color: #ffffff !important;
+            font-size: 2rem !important;
+            margin: 0 0 0.35rem 0 !important;
+            letter-spacing: -0.02em;
+        }
+        .hero-banner p {
+            color: #d8f3dc !important;
+            margin: 0;
+            font-size: 1rem;
+        }
+        .engine-badge {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 999px;
+            padding: 0.2rem 0.75rem;
+            font-size: 0.82rem;
+            margin-top: 0.6rem;
+            color: #ecfdf5 !important;
+        }
+        [data-testid="stChatMessage"] {
+            border-radius: 12px;
+            border: 1px solid rgba(45, 106, 79, 0.12);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
+        [data-testid="stChatInput"] textarea {
+            border-radius: 12px !important;
+            border: 2px solid #95d5b2 !important;
+        }
+        [data-testid="stChatInput"] textarea:focus {
+            border-color: #2d6a4f !important;
+            box-shadow: 0 0 0 2px rgba(45, 106, 79, 0.15) !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     aiml_mtime = AIML_PATH.stat().st_mtime if AIML_PATH.exists() else 0.0
 
     st.set_page_config(page_title="Family Tree Chatbot", page_icon="🌳", layout="centered")
-    st.title("🌳 Family Tree Chatbot")
-    st.caption("Add family facts or ask relationship questions — AIML, Neo4j & Streamlit.")
+    _inject_app_styles()
 
     try:
         engine, label = load_engine()
@@ -682,7 +752,16 @@ def main() -> None:
         st.error(f"Could not start chatbot: {e}")
         st.stop()
 
-    st.caption(f"Engine: {label}")
+    st.markdown(
+        f"""
+        <div class="hero-banner">
+            <h1>🌳 Family Tree Chatbot</h1>
+            <p>Ask relationship questions or add family facts — powered by AIML &amp; Neo4j.</p>
+            <span class="engine-badge">Engine: {label}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # Check for empty database and suggest seeding
     db_empty = False
@@ -707,26 +786,25 @@ def main() -> None:
                     st.error(f"Failed to seed database: {ex}")
 
     with st.sidebar:
-        st.markdown("### Add family data")
-        st.markdown(
-            "- ADD MALE PERSON Ali\n"
-            "- ADD FEMALE PERSON Sara\n"
-            "- ADD PARENT Haider OF Ali\n"
-            "- SET AGE OF Ali TO 28\n"
-            "- Ali is male\n"
-            "- add Bob as male and his age is 40 years old\n"
-            "- Haider is the father of Ali\n"
-            "- Haider and Nadia are married\n"
-            "- DELETE PERSON Ali\n"
-            "- DELETE PARENT Haider OF Ali"
-        )
-        st.markdown("### Query examples")
-        st.markdown(
-            "- Who is the father of Ali?\n"
-            "- How old is Ali?\n"
-            "- Is Ali male?\n"
-            "- All males"
-        )
+        st.markdown("## Quick Guide")
+        with st.expander("➕ Add family data", expanded=False):
+            st.markdown(
+                "- `ADD MALE PERSON Ali`\n"
+                "- `ADD FEMALE PERSON Sara`\n"
+                "- `ADD PARENT Haider OF Ali`\n"
+                "- `SET AGE OF Ali TO 28`\n"
+                "- `Haider and Nadia are married`\n"
+                "- `DELETE PERSON Ali`"
+            )
+        with st.expander("🔍 Query examples", expanded=True):
+            st.markdown(
+                "- Who is the father of Ali?\n"
+                "- How old is Ali?\n"
+                "- Is Ali male?\n"
+                "- All males\n"
+                "- Graph report\n"
+                "- Hidden relationship between Ahmed and Nadia"
+            )
         if st.button("🔄 Reload Data"):
             load_engine.clear()
             load_aiml_kernel.clear()

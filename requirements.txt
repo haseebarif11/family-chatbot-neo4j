@@ -2,3 +2,4 @@ streamlit>=1.35.0
 python-aiml>=0.9.2
 neo4j>=5.14.0
 python-dotenv>=1.0.0
+pytest>=8.0.0
