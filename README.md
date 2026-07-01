@@ -81,7 +81,6 @@ pip install -r requirements.txt
 cp .env.example .env   # set NEO4J_PASSWORD
 python migrate_pl_to_neo4j.py --clear
 pytest tests/ -v
-python verify_live_queries.py
 ```
 
 Tests skip automatically if Neo4j is not running on `bolt://localhost:7687`.
@@ -93,7 +92,6 @@ Tests skip automatically if Neo4j is not running on `bolt://localhost:7687`.
 | `app.py` | Streamlit UI + AIML orchestration (minimal changes from A2) |
 | `neo4j_bridge.py` | `FamilyGraphEngine` — Cypher queries, BFS fallback, connection config, and data-entry helpers |
 | `migrate_pl_to_neo4j.py` | One-time Prolog → Neo4j migration |
-| `verify_live_queries.py` | Smoke-test queries against live Neo4j |
 | `tests/test_family_graph.py` | Pytest suite (intermarried-branch cases) |
 | `family_chatbot.aiml` | AIML patterns (with new inference query patterns) |
 | `family_kb.pl` | Original Prolog rules/facts (reference + migration source) |
