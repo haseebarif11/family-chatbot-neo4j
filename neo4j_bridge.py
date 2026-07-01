@@ -89,17 +89,24 @@ def _names(result) -> list[str]:
     return sorted({r["name"] for r in result if r.get("name")})
 
 
+def _path_step_phrase(src: str, rel: str, dst: str) -> str:
+    s, d = src.capitalize(), dst.capitalize()
+    if rel == "parent_of":
+        return f"{s} is the parent of {d}"
+    if rel == "child_of":
+        return f"{s} is the child of {d}"
+    return f"{s} is married to {d}"
+
+
+def _path_to_numbered_list(path: list[tuple[str, str, str]]) -> str:
+    return "\n".join(
+        f"{i}. {_path_step_phrase(src, rel, dst)}."
+        for i, (src, rel, dst) in enumerate(path, 1)
+    )
+
+
 def _path_to_prose(path: list[tuple[str, str, str]]) -> str:
-    """Turn a BFS edge list into a readable comma-separated sentence."""
-    phrases: list[str] = []
-    for src, rel, dst in path:
-        s, d = src.capitalize(), dst.capitalize()
-        if rel == "parent_of":
-            phrases.append(f"{s} is the parent of {d}")
-        elif rel == "child_of":
-            phrases.append(f"{s} is the child of {d}")
-        else:
-            phrases.append(f"{s} is married to {d}")
+    phrases = [_path_step_phrase(src, rel, dst) for src, rel, dst in path]
     if not phrases:
         return ""
     if len(phrases) == 1:
@@ -592,23 +599,23 @@ class FamilyGraphEngine:
         p1t, p2t = p1.capitalize(), p2.capitalize()
 
         if ancestors:
-            nearest = ancestors[-1]          # deepest = nearest to both
+            nearest = ancestors[-1]
             all_anc = ", ".join(a.capitalize() for a in ancestors)
             return (
-                f"{p1t} and {p2t} share a common ancestor: "
-                f"{nearest.capitalize()} (nearest). "
+                f"**Mutual Connection: {p1t} and {p2t}**\n\n"
+                f"Nearest shared ancestor: {nearest.capitalize()}\n"
                 f"All shared ancestors: {all_anc}."
             )
 
-        # Fall back: shortest graph path
         path = self._bfs_shortest_path(p1, p2)
         if not path:
             return f"No mutual connection found between {p1t} and {p2t}."
 
-        chain = _path_to_prose(path)
+        n = len(path)
         return (
-            f"**Connection path** ({len(path)} step{'s' if len(path) != 1 else ''}):\n\n"
-            f"{chain}\n\n"
+            f"**Connection Path: {p1t} and {p2t}**\n\n"
+            f"Length: {n} step{'s' if n != 1 else ''}\n\n"
+            f"{_path_to_numbered_list(path)}\n\n"
             f"{p1t} and {p2t} are linked through the family graph."
         )
 
@@ -645,17 +652,16 @@ class FamilyGraphEngine:
         # BFS path walk
         path = self._bfs_shortest_path(p1, p2)
         if not path:
-            return f"No known relationship path found between **{p1t}** and **{p2t}**."
+            return f"No known relationship path found between {p1t} and {p2t}."
 
-        chain = _path_to_prose(path)
-        hops = len(path)
+        n = len(path)
         return (
-            f"### Indirect Relationship\n\n"
-            f"**{p1t}** and **{p2t}** are connected through **{hops} "
-            f"step{'s' if hops != 1 else ''}** in the family graph:\n\n"
-            f"{chain}\n\n"
-            f"*They are related through the graph structure but do not share "
-            f"a single named relationship label (e.g. cousin, aunt, uncle).*"
+            f"**Indirect Relationship: {p1t} and {p2t}**\n\n"
+            f"Connection length: {n} step{'s' if n != 1 else ''}\n\n"
+            f"{_path_to_numbered_list(path)}\n\n"
+            f"Summary: {_path_to_prose(path)}\n\n"
+            f"{p1t} and {p2t} are connected through the family graph but do not "
+            f"share a single named relationship label."
         )
 
     def age_similarity(self, person: str, max_gap: int = 5) -> str:
@@ -705,18 +711,114 @@ class FamilyGraphEngine:
         for name, age, diff in close:
             tags = []
             if name in cousins:
-                tags.append("cousin ⭐ companion candidate")
+                tags.append("cousin, companion candidate")
             elif name in same_gen:
                 tags.append("same generation")
-            gap_str = f"{diff} yr{'s' if diff != 1 else ''} apart"
-            tag_str = f" [{', '.join(tags)}]" if tags else ""
-            lines.append(f"  • {name.capitalize()} (age {age}, {gap_str}){tag_str}")
+            gap_str = f"{diff} year{'s' if diff != 1 else ''} apart"
+            tag_str = f" ({', '.join(tags)})" if tags else ""
+            lines.append(f"- {name.capitalize()}, age {age}, {gap_str}{tag_str}")
 
-        result = (
-            f"{pt} is {target_age} years old. "
-            f"Family members within {max_gap} years:\n" + "\n".join(lines)
+        return (
+            f"**Age Similarity: {pt}** (age {target_age})\n\n"
+            f"Family members within {max_gap} years:\n"
+            + "\n".join(lines)
         )
-        return result
+
+    # ── Graph visualization data ───────────────────────────────────────────
+
+    def _fetch_all_nodes(self) -> list[dict]:
+        with self._driver.session() as session:
+            return [
+                {"name": r["name"], "gender": r["gender"], "age": r["age"]}
+                for r in session.run(
+                    "MATCH (p:Person) RETURN p.name AS name, p.gender AS gender, p.age AS age "
+                    "ORDER BY name"
+                )
+            ]
+
+    def _fetch_all_edges(self, include_inferred: bool = True) -> list[dict]:
+        edges: list[dict] = []
+        with self._driver.session() as session:
+            for r in session.run(
+                "MATCH (a:Person)-[:PARENT_OF]->(b:Person) "
+                "RETURN a.name AS src, b.name AS dst"
+            ):
+                edges.append({"src": r["src"], "dst": r["dst"], "type": "PARENT_OF"})
+
+            for r in session.run(
+                "MATCH (a:Person)-[:MARRIED_TO]-(b:Person) "
+                "WHERE a.name < b.name "
+                "RETURN a.name AS src, b.name AS dst"
+            ):
+                edges.append({"src": r["src"], "dst": r["dst"], "type": "MARRIED_TO"})
+                edges.append({"src": r["dst"], "dst": r["src"], "type": "MARRIED_TO"})
+
+            if include_inferred:
+                for r in session.run(
+                    "MATCH (a:Person)-[rel]->(b:Person) WHERE type(rel) = 'INFERRED' "
+                    "RETURN a.name AS src, b.name AS dst, rel.relation AS relation"
+                ):
+                    edges.append({
+                        "src": r["src"],
+                        "dst": r["dst"],
+                        "type": r["relation"],
+                        "category": "INFERRED",
+                        "relation": r["relation"],
+                    })
+        return edges
+
+    def _neighborhood(self, center: str, depth: int = 2) -> set[str]:
+        center = center.strip().lower()
+        seen = {center}
+        frontier = {center}
+        with self._driver.session() as session:
+            for _ in range(depth):
+                nxt: set[str] = set()
+                for name in frontier:
+                    rows = session.run(
+                        "MATCH (p:Person {name: $name})-[:PARENT_OF|MARRIED_TO]-(n:Person) "
+                        "RETURN DISTINCT n.name AS name",
+                        name=name,
+                    )
+                    for row in rows:
+                        if row["name"] not in seen:
+                            nxt.add(row["name"])
+                seen |= nxt
+                frontier = nxt
+        return seen
+
+    def fetch_full_graph(self, include_inferred: bool = False) -> tuple[list[dict], list[dict]]:
+        return self._fetch_all_nodes(), self._fetch_all_edges(include_inferred=include_inferred)
+
+    def fetch_subgraph(
+        self, center: str, depth: int = 2, include_inferred: bool = False
+    ) -> tuple[list[dict], list[dict]]:
+        names = self._neighborhood(center, depth)
+        nodes = [n for n in self._fetch_all_nodes() if n["name"] in names]
+        edges = [
+            e for e in self._fetch_all_edges(include_inferred=include_inferred)
+            if e["src"] in names and e["dst"] in names
+        ]
+        return nodes, edges
+
+    def fetch_highlight_path(
+        self, p1: str, p2: str, include_inferred: bool = False
+    ) -> tuple[list[dict], list[dict], set[str], set[tuple[str, str, str]]]:
+        """Structural graph plus highlighted shortest-path nodes and edges."""
+        nodes, edges = self.fetch_full_graph(include_inferred=include_inferred)
+        path = self._bfs_shortest_path(p1.strip().lower(), p2.strip().lower())
+        path_nodes: set[str] = set()
+        path_edges: set[tuple[str, str, str]] = set()
+        for src, rel, dst in path:
+            path_nodes.update([src, dst])
+            if rel == "parent_of":
+                path_edges.add((src, dst, "PARENT_OF"))
+            elif rel == "child_of":
+                path_edges.add((dst, src, "PARENT_OF"))
+            else:
+                path_edges.add((src, dst, "MARRIED_TO"))
+                path_edges.add((dst, src, "MARRIED_TO"))
+        return nodes, edges, path_nodes, path_edges
 
     def graph_report(self) -> str:
         """
@@ -736,6 +838,9 @@ class FamilyGraphEngine:
             ).single()["n"] or 0
             marriage_count = session.run(
                 "OPTIONAL MATCH ()-[r:MARRIED_TO]-() RETURN toInteger(count(r)/2) AS n"
+            ).single()["n"] or 0
+            inferred_count = session.run(
+                "MATCH ()-[r]->() WHERE type(r) = 'INFERRED' RETURN count(r) AS n"
             ).single()["n"] or 0
 
             # Most-connected person (degree = PARENT_OF in+out + MARRIED_TO)
@@ -761,22 +866,22 @@ class FamilyGraphEngine:
                 max_depth = len(ancestors)
                 deepest_person = person
 
-        total_rels = parent_count + marriage_count
+        total_rels = parent_count + marriage_count + inferred_count
         deepest = deepest_person.capitalize() if deepest_person else "N/A"
 
         return (
-            "### Family Graph Analysis Report\n\n"
-            "#### Graph Overview\n"
-            f"- **Node label:** `Person`\n"
-            f"- **Total members:** {n_people}\n"
-            f"- **PARENT_OF relationships:** {parent_count}\n"
-            f"- **MARRIED_TO couples:** {marriage_count}\n"
-            f"- **Total edges:** {total_rels}\n\n"
-            "#### Key Insights\n"
-            f"- **Most connected member:** {most_connected_name} "
-            f"({most_connected_deg} direct links)\n"
-            f"- **Deepest lineage:** {deepest} has **{max_depth}** "
-            f"ancestor{'s' if max_depth != 1 else ''} in the tree"
+            "**Family Graph Analysis Report**\n\n"
+            "| Metric | Value |\n"
+            "| --- | --- |\n"
+            f"| Node label | Person |\n"
+            f"| Total members | {n_people} |\n"
+            f"| Parent-child links | {parent_count} |\n"
+            f"| Marriages | {marriage_count} |\n"
+            f"| Inferred (Prolog) links | {inferred_count} |\n"
+            f"| Total relationships | {total_rels} |\n"
+            f"| Most connected member | {most_connected_name} ({most_connected_deg} links) |\n"
+            f"| Deepest lineage | {deepest} ({max_depth} ancestor"
+            f"{'s' if max_depth != 1 else ''}) |"
         )
 
 _engine: FamilyGraphEngine | None = None

@@ -61,11 +61,70 @@ class TestInference:
     def test_age_similarity_laiba(self, neo4j_engine):
         msg = neo4j_engine.age_similarity("laiba")
         assert "Laiba" in msg
-        assert "years old" in msg.lower()
+        assert "age 5" in msg.lower()
         assert "Usman" in msg
 
     def test_graph_report_nonempty(self, neo4j_engine):
         report = neo4j_engine.graph_report()
         assert "14" in report
-        assert "PARENT_OF" in report
-        assert "MARRIED_TO" in report
+        assert "Parent-child" in report
+        assert "Marriages" in report
+
+
+class TestGraphVisualization:
+    def test_fetch_full_graph(self, neo4j_engine):
+        nodes, edges = neo4j_engine.fetch_full_graph()
+        assert len(nodes) == 14
+        assert any(e["type"] == "PARENT_OF" for e in edges)
+        assert any(e["type"] == "MARRIED_TO" for e in edges)
+
+    def test_fetch_subgraph(self, neo4j_engine):
+        nodes, edges = neo4j_engine.fetch_subgraph("ali")
+        names = {n["name"] for n in nodes}
+        assert "ali" in names
+        assert len(names) >= 3
+
+    def test_fetch_highlight_path(self, neo4j_engine):
+        nodes, edges, path_nodes, path_edges = neo4j_engine.fetch_highlight_path(
+            "ahmed", "nadia"
+        )
+        assert len(nodes) == 14
+        assert "ahmed" in path_nodes
+        assert "nadia" in path_nodes
+        assert len(path_edges) >= 1
+
+    def test_pyvis_html_generation(self, neo4j_engine):
+        from graph_viz import build_full_graph_html
+
+        nodes, edges = neo4j_engine.fetch_full_graph()
+        html = build_full_graph_html(nodes, edges)
+        assert "<html" in html.lower()
+        assert "vis-network" in html.lower() or "network" in html.lower()
+
+
+class TestPrologBridge:
+    def test_export_neo4j_to_prolog(self, neo4j_engine):
+        from prolog_bridge import export_neo4j_to_prolog, EXPORT_PATH
+
+        path = export_neo4j_to_prolog()
+        assert path.exists()
+        text = path.read_text(encoding="utf-8")
+        assert "parent(" in text
+        assert "male(" in text
+        assert "father(" in text  # derived rules appended
+
+    def test_prolog_query_cousins(self, neo4j_engine):
+        from prolog_bridge import export_neo4j_to_prolog, query_prolog
+
+        export_neo4j_to_prolog()
+        answers, engine = query_prolog("cousin", "laiba")
+        assert engine
+        assert "ahmed" in answers
+
+    def test_sync_prolog_bridge(self, neo4j_engine):
+        from prolog_bridge import sync_prolog_bridge
+
+        msg = sync_prolog_bridge()
+        assert "Bridge Sync Complete" in msg
+        report = neo4j_engine.graph_report()
+        assert "Inferred (Prolog)" in report

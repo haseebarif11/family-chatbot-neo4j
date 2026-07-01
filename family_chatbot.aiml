@@ -246,7 +246,13 @@
 
 <category><pattern>ALL MARRIED COUPLES</pattern>
   <template><set name="rel">list_married</set><set name="p1"></set>LIST</template></category>
+<category><pattern>LIST ALL MARRIED COUPLES</pattern>
+  <template><set name="rel">list_married</set><set name="p1"></set>LIST</template></category>
 <category><pattern>LIST MARRIED COUPLES</pattern>
+  <template><set name="rel">list_married</set><set name="p1"></set>LIST</template></category>
+<category><pattern>SHOW ALL MARRIED COUPLES</pattern>
+  <template><set name="rel">list_married</set><set name="p1"></set>LIST</template></category>
+<category><pattern>SHOW MARRIED COUPLES</pattern>
   <template><set name="rel">list_married</set><set name="p1"></set>LIST</template></category>
 
 <!-- =============================================================== -->
@@ -439,6 +445,78 @@ Ask questions:
 <category>
   <pattern>GRAPH STATS</pattern>
   <template>GRAPH_REPORT</template>
+</category>
+
+<!-- Feature 5: Interactive Graph Visualization (PyVis) -->
+<category>
+  <pattern>SHOW FAMILY TREE</pattern>
+  <template>VISUALIZE_FULL</template>
+</category>
+<category>
+  <pattern>SHOW FULL GRAPH</pattern>
+  <template>VISUALIZE_FULL</template>
+</category>
+<category>
+  <pattern>VISUALIZE GRAPH</pattern>
+  <template>VISUALIZE_FULL</template>
+</category>
+<category>
+  <pattern>SHOW GRAPH</pattern>
+  <template>VISUALIZE_FULL</template>
+</category>
+<category>
+  <pattern>SHOW SUBGRAPH OF *</pattern>
+  <template><set name="p1"><star/></set>VISUALIZE_SUBGRAPH</template>
+</category>
+<category>
+  <pattern>SUBGRAPH FOR *</pattern>
+  <template><set name="p1"><star/></set>VISUALIZE_SUBGRAPH</template>
+</category>
+<category>
+  <pattern>SUBGRAPH OF *</pattern>
+  <template><set name="p1"><star/></set>VISUALIZE_SUBGRAPH</template>
+</category>
+<category>
+  <pattern>HIGHLIGHT PATH BETWEEN * AND *</pattern>
+  <template><set name="p1"><star/></set><set name="p2"><star index="2"/></set>VISUALIZE_HIGHLIGHT</template>
+</category>
+<category>
+  <pattern>VISUALIZE PATH BETWEEN * AND *</pattern>
+  <template><set name="p1"><star/></set><set name="p2"><star index="2"/></set>VISUALIZE_HIGHLIGHT</template>
+</category>
+<category>
+  <pattern>SHOW PATH FROM * TO *</pattern>
+  <template><set name="p1"><star/></set><set name="p2"><star index="2"/></set>VISUALIZE_HIGHLIGHT</template>
+</category>
+
+<!-- Feature 6: Hybrid Neo4j–Prolog Bridge -->
+<category>
+  <pattern>SYNC PROLOG BRIDGE</pattern>
+  <template>PROLOG_SYNC</template>
+</category>
+<category>
+  <pattern>RUN PROLOG INFERENCE</pattern>
+  <template>PROLOG_SYNC</template>
+</category>
+<category>
+  <pattern>IMPORT PROLOG INFERENCE</pattern>
+  <template>PROLOG_SYNC</template>
+</category>
+<category>
+  <pattern>EXPORT TO PROLOG AND SYNC</pattern>
+  <template>PROLOG_SYNC</template>
+</category>
+<category>
+  <pattern>PROLOG * OF *</pattern>
+  <template><set name="rel"><star/></set><set name="p1"><star index="2"/></set>PROLOG_QUERY</template>
+</category>
+<category>
+  <pattern>QUERY PROLOG * OF *</pattern>
+  <template><set name="rel"><star/></set><set name="p1"><star index="2"/></set>PROLOG_QUERY</template>
+</category>
+<category>
+  <pattern>ASK PROLOG * OF *</pattern>
+  <template><set name="rel"><star/></set><set name="p1"><star index="2"/></set>PROLOG_QUERY</template>
 </category>
 
 <!-- Default fallback -->

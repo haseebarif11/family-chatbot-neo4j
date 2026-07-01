@@ -24,6 +24,12 @@ from neo4j_bridge import (
     process_data_entry,
     reset_engine,
 )
+from graph_viz import (
+    build_full_graph_html,
+    build_highlighted_path_html,
+    build_subgraph_html,
+)
+from prolog_bridge import prolog_query_report, sync_prolog_bridge
 
 # ── Inference feature tokens (returned by AIML, dispatched below) ─────────
 _INFERENCE_TOKENS = (
@@ -31,6 +37,11 @@ _INFERENCE_TOKENS = (
     "HIDDEN_RELATIONSHIP",
     "AGE_SIMILARITY",
     "GRAPH_REPORT",
+    "VISUALIZE_FULL",
+    "VISUALIZE_SUBGRAPH",
+    "VISUALIZE_HIGHLIGHT",
+    "PROLOG_SYNC",
+    "PROLOG_QUERY",
 )
 
 # ── Paths ──────────────────────────────────────────────────────────────
@@ -183,12 +194,54 @@ LIST_KEYWORDS = {
     "SISTER-IN-LAW": "list_sister_in_law", "SISTERS-IN-LAW": "list_sister_in_law",
 }
 
+# Multi-word list phrases (matched longest-first after prefix stripping)
+LIST_PHRASES = {
+    "ALL MARRIED COUPLES": "list_married",
+    "MARRIED COUPLES": "list_married",
+    "MARRIED COUPLE": "list_married",
+    "ALL MALES": "list_male",
+    "ALL MALE": "list_male",
+    "ALL FEMALES": "list_female",
+    "ALL FEMALE": "list_female",
+    "ALL PARENTS": "list_parent",
+    "ALL CHILDREN": "list_child",
+    "ALL SIBLINGS": "list_sibling",
+    "ALL AGES": "list_age",
+    "ALL FAMILY MEMBERS": "members",
+    "FAMILY MEMBERS": "members",
+    "ALL MEMBERS": "members",
+    "ALL FATHERS": "list_father",
+    "ALL MOTHERS": "list_mother",
+    "ALL BROTHERS": "list_brother",
+    "ALL SISTERS": "list_sister",
+    "ALL SONS": "list_son",
+    "ALL DAUGHTERS": "list_daughter",
+    "ALL UNCLES": "list_uncle",
+    "ALL AUNTS": "list_aunt",
+    "ALL COUSINS": "list_cousin",
+    "ALL NEPHEWS": "list_nephew",
+    "ALL NIECES": "list_niece",
+    "ALL HUSBANDS": "list_husband",
+    "ALL WIVES": "list_wife",
+    "ALL SPOUSES": "list_spouse",
+    "ALL GRANDFATHERS": "list_grandfather",
+    "ALL GRANDMOTHERS": "list_grandmother",
+    "ALL GRANDPARENTS": "list_grandparent",
+    "ALL GRANDCHILDREN": "list_grandchild",
+    "ALL ANCESTORS": "list_ancestor",
+    "ALL DESCENDANTS": "list_descendant",
+}
+
 LIST_PREFIXES = (
-    "TELL ME ", "SHOW ME ", "SHOW ", "LIST ALL ", "LIST OF ALL ", "LIST OF ", "LIST ",
+    "PLEASE ", "CAN YOU ", "COULD YOU ", "I WANT TO ", "I WANT ",
+    "TELL ME ", "SHOW ME ", "SHOW ", "DISPLAY ", "GET ",
+    "LIST ALL THE ", "LIST ALL OF THE ", "LIST ALL OF ", "LIST ALL ",
+    "LIST OF ALL THE ", "LIST OF ALL ", "LIST OF THE ", "LIST OF ", "LIST ",
     "WHAT ARE ALL THE ", "WHAT ARE ALL ", "WHAT ARE THE ", "WHAT ARE ",
     "WHO ARE ALL THE ", "WHO ARE ALL ", "WHO ARE THE ", "WHO ARE ",
-    "GIVE ME ", "GIVE ALL ", "GIVE ", "NAMES OF ALL ", "NAMES OF ",
-    "ALL THE ", "ALL ", "THE ",
+    "GIVE ME ALL THE ", "GIVE ME ALL ", "GIVE ME ", "GIVE ALL ", "GIVE ",
+    "NAMES OF ALL THE ", "NAMES OF ALL ", "NAMES OF THE ", "NAMES OF ",
+    "ALL THE ", "ALL OF THE ", "ALL OF ", "ALL ", "THE ",
 )
 
 _QUERY_PREFIXES = (
@@ -221,18 +274,37 @@ def is_query_not_data_entry(text: str) -> bool:
 
 
 def detect_list_intent(text: str) -> str | None:
-    core = text.upper().strip()
-    changed = True
-    while changed:
-        changed = False
-        for prefix in LIST_PREFIXES:
+    core = re.sub(r"[?.!,;:]+$", "", text.upper().strip())
+    core = re.sub(r"\s+", " ", core)
+
+    while True:
+        stripped = False
+        for prefix in sorted(LIST_PREFIXES, key=len, reverse=True):
             if core.startswith(prefix):
                 core = core[len(prefix):].strip()
-                changed = True
+                stripped = True
                 break
-    if re.search(r"\bOF\b", core):
+        if not stripped:
+            break
+
+    # "fathers of ali" is a relation query, not a list-all query
+    if re.search(r"\bOF\s+[A-Z]", core) and not re.search(
+        r"\bOF\s+(THE\s+)?(FAMILY|MALES|FEMALES|PARENTS)\b", core
+    ):
         return None
+
     core = re.sub(r"\b(IN|OF)\s+(THE\s+)?FAMILY\b", "", core).strip()
+    core = re.sub(r"\s+", " ", core)
+
+    for phrase in sorted(LIST_PHRASES, key=len, reverse=True):
+        if core == phrase or core.endswith(" " + phrase) or phrase in core:
+            return LIST_PHRASES[phrase]
+
+    if "MARRIED" in core and re.search(r"COUPLE", core):
+        return "list_married"
+    if "FAMILY" in core and "MEMBER" in core:
+        return "members"
+
     return LIST_KEYWORDS.get(core)
 
 
@@ -437,16 +509,44 @@ def split_compound_data_entry(text: str) -> list[str]:
     return [text]
 
 
-def get_reply(user_text: str, kernel, engine) -> tuple[str, bool]:
+def _clear_graph_viz(session_state) -> None:
+    """Remove any displayed graph (called when a non-viz query is processed)."""
+    if session_state is None:
+        return
+    session_state.pop("graph_viz_html", None)
+    session_state.pop("graph_viz_active", None)
+    session_state.pop("graph_viz_sidebar", None)
+
+
+def _set_graph_viz(session_state, html: str, *, from_sidebar: bool = False) -> None:
+    if session_state is None:
+        return
+    session_state["graph_viz_html"] = html
+    session_state["graph_viz_active"] = not from_sidebar
+    session_state["graph_viz_sidebar"] = from_sidebar
+
+
+def _build_viz_html(engine: FamilyGraphEngine, mode: str, p1: str = "", p2: str = "") -> str:
+    if mode == "full":
+        nodes, edges = engine.fetch_full_graph()
+        return build_full_graph_html(nodes, edges)
+    if mode == "subgraph":
+        nodes, edges = engine.fetch_subgraph(p1)
+        return build_subgraph_html(nodes, edges, p1)
+    nodes, edges, path_nodes, path_edges = engine.fetch_highlight_path(p1, p2)
+    return build_highlighted_path_html(nodes, edges, path_nodes, path_edges, p1, p2)
+
+
+def get_reply(user_text: str, kernel, engine, session_state=None) -> tuple[str, bool]:
     parts = split_compound_data_entry(user_text)
     if len(parts) == 1:
-        return _get_reply_single(parts[0], kernel, engine)
+        return _get_reply_single(parts[0], kernel, engine, session_state)
 
     replies = []
     reload_needed = False
     current_engine = engine
     for part in parts:
-        reply, reload_part = _get_reply_single(part, kernel, current_engine)
+        reply, reload_part = _get_reply_single(part, kernel, current_engine, session_state)
         replies.append(reply)
         reload_needed = reload_needed or reload_part
         if reload_part:
@@ -493,8 +593,10 @@ def try_possessive_data_entry(text: str, kernel) -> str | None:
     return None
 
 
-def _get_reply_single(user_text: str, kernel, engine) -> tuple[str, bool]:
+def _get_reply_single(user_text: str, kernel, engine, session_state=None) -> tuple[str, bool]:
     """Return (reply, reload_engine_needed)."""
+    _clear_graph_viz(session_state)
+
     text = preprocess(user_text)
     if not text:
         return "Please type a question or data-entry command.", False
@@ -575,6 +677,43 @@ def _get_reply_single(user_text: str, kernel, engine) -> tuple[str, bool]:
 
     if aiml_resp and "GRAPH_REPORT" in aiml_resp:
         return engine.graph_report(), False
+
+    if aiml_resp and "VISUALIZE_FULL" in aiml_resp:
+        if session_state is not None:
+            _set_graph_viz(session_state, _build_viz_html(engine, "full"))
+        return "Interactive visualization: **full family graph** (see below).", False
+
+    if aiml_resp and "VISUALIZE_SUBGRAPH" in aiml_resp:
+        p1 = (kernel.getPredicate("p1") or "").strip().lower()
+        if not p1:
+            return "Please name a person, e.g. 'Show subgraph of Ali'.", False
+        if session_state is not None:
+            _set_graph_viz(session_state, _build_viz_html(engine, "subgraph", p1=p1))
+        return f"Interactive visualization: **subgraph around {title(p1)}** (see below).", False
+
+    if aiml_resp and "VISUALIZE_HIGHLIGHT" in aiml_resp:
+        p1 = (kernel.getPredicate("p1") or "").strip().lower()
+        p2 = (kernel.getPredicate("p2") or "").strip().lower()
+        if not p1 or not p2:
+            return "Please name two people, e.g. 'Highlight path between Ahmed and Nadia'.", False
+        if session_state is not None:
+            _set_graph_viz(
+                session_state, _build_viz_html(engine, "highlight", p1=p1, p2=p2)
+            )
+        return (
+            f"Interactive visualization: **highlighted path {title(p1)} → {title(p2)}** "
+            f"(see below)."
+        ), False
+
+    if aiml_resp and "PROLOG_SYNC" in aiml_resp:
+        return sync_prolog_bridge(), True
+
+    if aiml_resp and "PROLOG_QUERY" in aiml_resp:
+        rel = normalize_relation(kernel.getPredicate("rel") or "")
+        p1 = (kernel.getPredicate("p1") or "").strip().lower()
+        if not rel or not p1:
+            return "Try: 'Prolog cousins of Ali' or 'Query prolog uncle of Laiba'.", False
+        return prolog_query_report(rel, p1), False
 
     oldest_token = (aiml_resp or "").strip()
     if oldest_token.endswith(("OLDEST", "OLDEST_MALE", "OLDEST_FEMALE")):
@@ -668,82 +807,12 @@ def _verify(verify_person: str, rel: str, p1: str, engine) -> str:
     return f"No, {title(verify_person)} is not the {r} of {title(p1)}."
 
 
-def _inject_app_styles() -> None:
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background: linear-gradient(165deg, #f8fafc 0%, #eef2f7 45%, #e8f0ec 100%);
-        }
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #1e3a2f 0%, #2d5a47 100%);
-        }
-        [data-testid="stSidebar"] * {
-            color: #f0fdf4 !important;
-        }
-        [data-testid="stSidebar"] .stButton > button {
-            background: #4ade80;
-            color: #14532d !important;
-            border: none;
-            font-weight: 600;
-            border-radius: 8px;
-        }
-        [data-testid="stSidebar"] .stButton > button:hover {
-            background: #86efac;
-            color: #14532d !important;
-        }
-        .hero-banner {
-            background: linear-gradient(135deg, #1e3a2f 0%, #2d6a4f 55%, #40916c 100%);
-            border-radius: 16px;
-            padding: 1.6rem 1.8rem;
-            margin-bottom: 1.2rem;
-            box-shadow: 0 8px 24px rgba(30, 58, 47, 0.18);
-        }
-        .hero-banner h1 {
-            color: #ffffff !important;
-            font-size: 2rem !important;
-            margin: 0 0 0.35rem 0 !important;
-            letter-spacing: -0.02em;
-        }
-        .hero-banner p {
-            color: #d8f3dc !important;
-            margin: 0;
-            font-size: 1rem;
-        }
-        .engine-badge {
-            display: inline-block;
-            background: rgba(255, 255, 255, 0.15);
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            border-radius: 999px;
-            padding: 0.2rem 0.75rem;
-            font-size: 0.82rem;
-            margin-top: 0.6rem;
-            color: #ecfdf5 !important;
-        }
-        [data-testid="stChatMessage"] {
-            border-radius: 12px;
-            border: 1px solid rgba(45, 106, 79, 0.12);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-        }
-        [data-testid="stChatInput"] textarea {
-            border-radius: 12px !important;
-            border: 2px solid #95d5b2 !important;
-        }
-        [data-testid="stChatInput"] textarea:focus {
-            border-color: #2d6a4f !important;
-            box-shadow: 0 0 0 2px rgba(45, 106, 79, 0.15) !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def main() -> None:
     aiml_mtime = AIML_PATH.stat().st_mtime if AIML_PATH.exists() else 0.0
 
     st.set_page_config(page_title="Family Tree Chatbot", page_icon="🌳", layout="centered")
-    _inject_app_styles()
+    st.title("🌳 Family Tree Chatbot")
+    st.caption("Add family facts or ask relationship questions — AIML, Neo4j & Streamlit.")
 
     try:
         engine, label = load_engine()
@@ -752,16 +821,7 @@ def main() -> None:
         st.error(f"Could not start chatbot: {e}")
         st.stop()
 
-    st.markdown(
-        f"""
-        <div class="hero-banner">
-            <h1>🌳 Family Tree Chatbot</h1>
-            <p>Ask relationship questions or add family facts — powered by AIML &amp; Neo4j.</p>
-            <span class="engine-badge">Engine: {label}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.caption(f"Engine: {label}")
 
     # Check for empty database and suggest seeding
     db_empty = False
@@ -786,29 +846,81 @@ def main() -> None:
                     st.error(f"Failed to seed database: {ex}")
 
     with st.sidebar:
-        st.markdown("## Quick Guide")
-        with st.expander("➕ Add family data", expanded=False):
-            st.markdown(
-                "- `ADD MALE PERSON Ali`\n"
-                "- `ADD FEMALE PERSON Sara`\n"
-                "- `ADD PARENT Haider OF Ali`\n"
-                "- `SET AGE OF Ali TO 28`\n"
-                "- `Haider and Nadia are married`\n"
-                "- `DELETE PERSON Ali`"
-            )
-        with st.expander("🔍 Query examples", expanded=True):
-            st.markdown(
-                "- Who is the father of Ali?\n"
-                "- How old is Ali?\n"
-                "- Is Ali male?\n"
-                "- All males\n"
-                "- Graph report\n"
-                "- Hidden relationship between Ahmed and Nadia"
-            )
+        st.markdown("### Add family data")
+        st.markdown(
+            "- ADD MALE PERSON Ali\n"
+            "- ADD FEMALE PERSON Sara\n"
+            "- ADD PARENT Haider OF Ali\n"
+            "- SET AGE OF Ali TO 28\n"
+            "- Ali is male\n"
+            "- add Bob as male and his age is 40 years old\n"
+            "- Haider is the father of Ali\n"
+            "- Haider and Nadia are married\n"
+            "- DELETE PERSON Ali\n"
+            "- DELETE PARENT Haider OF Ali"
+        )
+        st.markdown("### Query examples")
+        st.markdown(
+            "- Who is the father of Ali?\n"
+            "- How old is Ali?\n"
+            "- Is Ali male?\n"
+            "- All males\n"
+            "- Show family tree\n"
+            "- Highlight path between Ahmed and Nadia\n"
+            "- Sync prolog bridge"
+        )
+        st.markdown("### Graph visualization")
+        try:
+            member_options = [m.capitalize() for m in list_family_members()]
+        except Exception:
+            member_options = []
+        viz_mode = st.selectbox(
+            "View mode",
+            ["Full graph", "Subgraph", "Highlighted path"],
+            key="sidebar_viz_mode",
+        )
+        focus_person = st.selectbox(
+            "Focus person (subgraph)",
+            member_options or ["Ali"],
+            key="sidebar_viz_focus",
+        )
+        path_from = st.selectbox(
+            "Path from",
+            member_options or ["Ahmed"],
+            key="sidebar_viz_from",
+        )
+        path_to = st.selectbox(
+            "Path to",
+            member_options or ["Nadia"],
+            key="sidebar_viz_to",
+        )
+        if st.button("Render graph", key="sidebar_render_viz"):
+            if viz_mode == "Full graph":
+                html = _build_viz_html(engine, "full")
+            elif viz_mode == "Subgraph":
+                html = _build_viz_html(engine, "subgraph", p1=focus_person.lower())
+            else:
+                html = _build_viz_html(
+                    engine, "highlight", p1=path_from.lower(), p2=path_to.lower()
+                )
+            _set_graph_viz(st.session_state, html, from_sidebar=True)
+            st.rerun()
+        if st.button("Sync Prolog bridge", key="sidebar_prolog_sync"):
+            with st.spinner("Exporting facts, running Prolog inference, importing..."):
+                st.session_state["prolog_sync_msg"] = sync_prolog_bridge()
+                load_engine.clear()
+            st.rerun()
         if st.button("🔄 Reload Data"):
             load_engine.clear()
             load_aiml_kernel.clear()
             st.rerun()
+
+    if st.session_state.get("prolog_sync_msg"):
+        st.info(st.session_state.pop("prolog_sync_msg"))
+
+    if st.session_state.get("graph_viz_sidebar") and st.session_state.get("graph_viz_html"):
+        st.markdown("### Interactive family graph")
+        st.components.v1.html(st.session_state["graph_viz_html"], height=580, scrolling=True)
 
     if "messages" not in st.session_state:
         st.session_state.messages = [
@@ -827,16 +939,21 @@ def main() -> None:
             st.markdown(msg["content"])
 
     if prompt := st.chat_input("Add family data or ask a question..."):
+        st.session_state.pop("graph_viz_sidebar", None)
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                reply, reload_needed = get_reply(prompt, kernel, engine)
+                reply, reload_needed = get_reply(prompt, kernel, engine, st.session_state)
                 if reload_needed:
                     load_engine.clear()
                     engine, label = load_engine()
             st.markdown(reply)
+            if st.session_state.get("graph_viz_active") and st.session_state.get("graph_viz_html"):
+                st.components.v1.html(
+                    st.session_state["graph_viz_html"], height=580, scrolling=True
+                )
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
 

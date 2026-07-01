@@ -23,3 +23,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated Prolog export from Neo4j bridge
+neo4j_export.pl
+
+# Generated visualization preview
+_test_viz.html
